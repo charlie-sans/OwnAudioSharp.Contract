@@ -1,0 +1,9 @@
+{
+  "Name": "OwnAudioSharp.Contract",
+  "Type": "lib",
+  "Namespace": "OwnAudioSharp",
+  "Version": "1.0.0",
+  "Description": "Reusable OwnaudioNET 4.0.6 bindings for Contract, consumed by import OwnAudioSharp.",
+  "Sources": [ "src/**/*.ct" ],
+  "NuGetDependencies": [ { "Name": "OwnAudioSharp", "Version": "4.0.6" } ]
+}

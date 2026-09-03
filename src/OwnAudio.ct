@@ -1,0 +1,125 @@
+namespace OwnAudioSharp;
+import __builtin.std;
+
+// OwnAudioSharp: a reusable Contract surface over the OwnaudioNET 4.0.6 audio
+// engine.
+//
+// The three types below shadow the CLR bindings hosted in the companion
+// `bridge/` project and reached through object handle widgets:
+//
+//   OwnAudio     engine lifecycle, config, device listing/routing, and
+//                programmatic output (raw buffered Send plus the output ring
+//                gauges used to pace a stream).
+//   FileSource   one track; an opaque handle to a CLR FileSource.
+//   AudioMixer   a mixer on the shared engine; an opaque handle to a CLR
+//                AudioMixer that tracks are wired into.
+//
+// This file is a genuine library surface: nothing here knows about tone
+// generation or any particular consumer. Import it by namespace:
+// `import OwnAudioSharp;` resolves THIS file by its declared namespace no
+// matter the file name (the consumer's project declares this library's src/
+// as an import root in contract.ctproj -> ImportRoots).
+//
+// Streaming is a consumer concern: this library hands you the pieces
+// (Send, FreeOutputSamples, TotalUnderruns, ClearOutputBuffer) to fill a
+// ManagedPtr<float> however you like and push it out in your own loop.
+
+// Engine lifecycle, device routing, and programmatic output.
+<ShadowBinding("OwnAudio")>
+Contract OwnAudio {
+    static fn Initialize(mock: bool, sampleRate: int, channels: int, bufferSize: int) -> bool {
+        return host.Initialize(mock, sampleRate, channels, bufferSize);
+    }
+    static fn InitializeDefault(sampleRate: int, channels: int, bufferSize: int) -> bool {
+        return host.InitializeDefault(sampleRate, channels, bufferSize);
+    }
+    static fn Start() { host.Start(); }
+    static fn Stop() { host.Stop(); }
+    static fn Shutdown() { host.Shutdown(); }
+    static fn IsInitialized() -> bool { return host.IsInitialized(); }
+    static fn IsRunning() -> bool { return host.IsRunning(); }
+
+    static fn SampleRate() -> int { return host.SampleRate(); }
+    static fn Channels() -> int { return host.Channels(); }
+    static fn BufferSize() -> int { return host.BufferSize(); }
+
+    static fn OutputDeviceCount() -> int { return host.OutputDeviceCount(); }
+    static fn OutputDeviceName(index: int) -> string { return host.OutputDeviceName(index); }
+
+    // Send raw interleaved floats from the native buffer at `address`
+    // (a ManagedPtr<float>'s Address()) to the output, zero-copy.
+    // sampleCount is total floats (frames × channels).
+    static fn Send(address: long, sampleCount: int) -> bool {
+        return host.SendSamples(address, sampleCount);
+    }
+
+    // Route output to the named device; use the system default by never
+    // calling this. Returns false pre-init or for an unknown device.
+    static fn SetOutputDeviceByName(deviceName: string) -> bool {
+        return host.SetOutputDeviceByName(deviceName);
+    }
+
+    // Output ring gauges (used to pace a stream).
+    static fn OutputBufferAvailable() -> int { return host.OutputBufferAvailable(); }
+    static fn OutputRingSamples() -> int { return host.OutputRingSamples(); }
+
+    // Free space in the output ring (>=0). On a mock engine, where fill
+    // reporting is absent, this falls back to the full ring size so a
+    // producer never falsely stalls.
+    static fn FreeOutputSamples() -> int { return host.FreeOutputSamples(); }
+
+    static fn TotalUnderruns() -> long { return host.TotalUnderruns(); }
+    static fn ClearOutputBuffer() { host.ClearOutputBuffer(); }
+}
+
+// A single audio track; an opaque handle to a CLR FileSource.
+<ShadowBinding("FileSource")>
+Contract FileSource {
+    handle: object;
+
+    // Open a track; fs.handle is null when the file is missing/undecodable or
+    // the engine is not initialized. bufferSize <= 0 uses the engine's own.
+    static fn Open(path: string, bufferSize: int) -> FileSource {
+        let fs = new FileSource();
+        fs.handle = host.Create(path, bufferSize);
+        return fs;
+    }
+
+    fn IsValid() -> bool { return this.handle != null; }
+    fn Play() -> bool { return host.Play(this.handle); }
+    fn Pause() -> bool { return host.Pause(this.handle); }
+    fn Stop() -> bool { return host.Stop(this.handle); }
+    fn Seek(positionInSeconds: double) -> bool { return host.Seek(this.handle, positionInSeconds); }
+    fn Position() -> double { return host.Position(this.handle); }
+    fn Duration() -> double { return host.Duration(this.handle); }
+    fn IsEndOfStream() -> bool { return host.IsEndOfStream(this.handle); }
+    fn SetLoop(loop: bool) -> bool { return host.SetLoop(this.handle, loop); }
+    fn Volume() -> float { return host.Volume(this.handle); }
+    fn SetVolume(volume: float) -> bool { return host.SetVolume(this.handle, volume); }
+    fn Dispose() { host.Dispose(this.handle); }
+}
+
+// A mixer of tracks on the shared engine; an opaque handle to a CLR
+// AudioMixer.
+<ShadowBinding("AudioMixer")>
+Contract AudioMixer {
+    handle: object;
+
+    // Create a mixer on the shared engine; m.handle is null when not
+    // initialized. Mixers are not started automatically.
+    static fn Open(bufferSize: int) -> AudioMixer {
+        let m = new AudioMixer();
+        m.handle = host.Create(bufferSize);
+        return m;
+    }
+
+    fn IsValid() -> bool { return this.handle != null; }
+    fn Start() -> bool { return host.Start(this.handle); }
+    fn Stop() -> bool { return host.Stop(this.handle); }
+    fn AddSource(source: FileSource) -> bool { return host.AddSource(this.handle, source.handle); }
+    fn RemoveSource(source: FileSource) -> bool { return host.RemoveSource(this.handle, source.handle); }
+    fn SourceCount() -> int { return host.SourceCount(this.handle); }
+    fn MasterVolume() -> float { return host.MasterVolume(this.handle); }
+    fn SetMasterVolume(volume: float) -> bool { return host.SetMasterVolume(this.handle, volume); }
+    fn Dispose() { host.Dispose(this.handle); }
+}

@@ -1,0 +1,9 @@
+{
+  "Name": "OwnAudioSharp.Contract.Sample",
+  "Type": "exe",
+  "Main": "main.ct",
+  "ImportRoots": [
+    "../src",
+    "../../ContractStdlib/src"
+  ]
+}

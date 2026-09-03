@@ -1,6 +1,6 @@
 # OwnAudioSharp.Contract
 
-A reusable [ContractIR](https://github.com/ContractIR) library surface over the
+A reusable [Contract](https://github.com/fy-nite/Contract) library surface over the
 `OwnaudioNET 4.0.6` .NET audio engine, importable by **namespace**:
 
 ```contract

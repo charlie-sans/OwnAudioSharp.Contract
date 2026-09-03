@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>OwnAudioSharp</RootNamespace>
+    <AssemblyName>OwnAudioSharp.Contract</AssemblyName>
+    <PackageId>OwnAudioSharp.Contract</PackageId>
+    <Version>1.0.0</Version>
+    <Description>Contract (<code>.ct</code>) bindings over the OwnaudioNET 4.0.6 audio engine, consumed by import OwnAudioSharp.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OwnAudioSharp" Version="4.0.6" />
+    <!-- ObjektRT.Core provides [ClassBinding] for shadow targets. Relative
+         reference so the library has no absolute paths. -->
+    <ProjectReference Include="..\..\ContractIR\libs\ObjektRT.Core\ObjektRT.Core.csproj" />
+  </ItemGroup>
+
+<!--
+    Class-library host: transient PackageReference assemblies are not copied
+    to the output by default, but the Contract CLI loads this host with
+    Assembly.LoadFrom, which resolves dependencies from the SAME folder.
+    Stage the Ownaudio package libs next to the bridge so the host can load.
+-->
+  <Target Name="StageOwnAudioLibs" AfterTargets="Build">
+    <ItemGroup>
+      <_OwnAudioLib Include="$(NuGetPackageRoot)ownaudiosharp\4.0.6\lib\net10.0\*.dll" />
+      <_OwnAudioNative Include="$(NuGetPackageRoot)ownaudiosharp\4.0.6\runtimes\win-x64\native\ownaudio_ffi.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_OwnAudioLib)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_OwnAudioNative)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

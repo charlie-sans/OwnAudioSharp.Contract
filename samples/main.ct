@@ -1,0 +1,125 @@
+import __builtin.std;
+import "../../ContractStdlib/src/Memory/ManagedPtr.ct";
+import OwnAudioSharp;
+
+// Self-test for the OwnAudioSharp.Contract library. It imports the library by
+// its DECLARED NAMESPACE (not by file name), proving the compiler's
+// content-based import. Runs against the software mock engine so no sound card
+// or audio file is needed.
+
+Contract Demo {
+    // Send a short (real-time) 440 Hz sine in small interleaved chunks, paced
+    // against the output ring. Returns underruns seen during streaming.
+    static fn StreamTone(framesPerCall: int, totalFrames: int) -> long {
+        var channels: int = OwnAudio.Channels();
+        var perCall: int = framesPerCall;
+        if (perCall <= 0) { perCall = 512; }
+        var buf = new ManagedPtr<float>(perCall * channels);
+
+        var sr: float = Convert.ToFloat32I(OwnAudio.SampleRate());
+        var step: float = 6.2832 * 440.0 / sr;
+        var phase: float = 0.0;
+        var sent: int = 0;
+        var underruns: long = 0;
+
+        while (sent < totalFrames) {
+            var take: int = perCall;
+            if (sent + take > totalFrames) { take = totalFrames - sent; }
+            var n: int = take * channels;
+
+            // Build one buffer worth of interleaved tone.
+            var i: int = 0;
+            var p: float = 0.0;
+            while (i < n) {
+                var s: float = Math.Sin(phase + p);
+                buf.Write(i, s);
+                p = p + step;
+                i = i + 1;
+            }
+            phase = phase + step * n;
+
+            // Pace: wait up to a short budget for room for the whole chunk, but
+            // never hard-block forever (mock may never drain). Send even if the
+            // budget runs out so a demo always progresses.
+            var guard: int = 0;
+            var needsRoom: bool = OwnAudio.FreeOutputSamples() < n;
+            while (needsRoom && guard < 40) {
+                Thread.Sleep(2);
+                guard = guard + 1;
+                needsRoom = OwnAudio.FreeOutputSamples() < n;
+            }
+
+            if (!OwnAudio.Send(buf.Address(), n)) { break; }
+            underruns = OwnAudio.TotalUnderruns();
+            sent = sent + take;
+            if (take < perCall) { break; }
+
+            var bps: float = sr * channels;
+            var ms: int = Convert.ToInt32F(n * 1000.0 / bps);
+            if (ms > 25) { ms = 25; }
+            Thread.Sleep(ms);
+        }
+
+        buf.Free();
+        return underruns;
+    }
+
+    static fn Main() {
+        if (!OwnAudio.Initialize(true, 48000, 2, 512)) {
+            IO.Println("FAIL: Initialize(mock)");
+            return;
+        }
+
+        IO.Println("OwnAudio initialized (mock):");
+        IO.Println("  SampleRate  = " + Convert.ToString(OwnAudio.SampleRate()));
+        IO.Println("  Channels    = " + Convert.ToString(OwnAudio.Channels()));
+        IO.Println("  BufferSize  = " + Convert.ToString(OwnAudio.BufferSize()));
+        IO.Println("  Devices     = " + Convert.ToString(OwnAudio.OutputDeviceCount()));
+        if (OwnAudio.OutputDeviceCount() > 0) {
+            IO.Println("  Device[0]   = " + OwnAudio.OutputDeviceName(0));
+        }
+
+        OwnAudio.Start();
+
+        // Streaming path: push a short raw-PCM tone through Send + pacing.
+        var underruns: long = Demo.StreamTone(256, 4 * 512);
+        IO.Println("Stream underruns = " + UnderrunsToString(underruns));
+
+        // Send a single buffer directly (static-size burst): fill 1024 floats
+        // (2*512 frames at 2 channels) and clear the ring between operations.
+        var burstCount: int = 1024;
+        var burst = new ManagedPtr<float>(burstCount);
+        var i: int = 0;
+        while (i < burstCount) {
+            burst.Write(i, 0.2);
+            i = i + 1;
+        }
+        OwnAudio.ClearOutputBuffer();
+        if (OwnAudio.Send(burst.Address(), burstCount)) {
+            IO.Println("Send burst: OK");
+        } else {
+            IO.Println("Send burst: FAILED");
+        }
+        burst.Free();
+
+        // Construction path: the library's shadow contracts allocate an object
+        // and store a host handle into an instance field (`stfld`). Exercise it
+        // here so a build of the object-handle layout stays honest. A path of
+        // "" makes the host return null, so these print valid=False.
+        var mx: AudioMixer = AudioMixer.Open(0);
+        IO.Println("AudioMixer.Open valid = " + Convert.ToStringB(mx.IsValid()));
+        mx.Dispose();
+        var fs: FileSource = FileSource.Open("", 0);
+        IO.Println("FileSource.Open valid = " + Convert.ToStringB(fs.IsValid()));
+        fs.Dispose();
+
+        OwnAudio.Shutdown();
+        IO.Println("Shutdown: OK");
+        IO.Println("DEMO OK");
+    }
+
+    static fn UnderrunsToString(u: long) -> string {
+        var v: int = u as int;
+        return Convert.ToString(v);
+    }
+}
