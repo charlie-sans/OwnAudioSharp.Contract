@@ -14,6 +14,10 @@ import __builtin.std;
 //   AudioMixer   a mixer on the shared engine; an opaque handle to a CLR
 //                AudioMixer that tracks are wired into.
 //
+// The sibling file Chip.ct adds `Chip`, a reusable chiptune synth engine whose
+// rendering/streaming lives entirely in C# (the same engine C# consumers call),
+// plus the `Wave` waveform enum.
+//
 // This file is a genuine library surface: nothing here knows about tone
 // generation or any particular consumer. Import it by namespace:
 // `import OwnAudioSharp;` resolves THIS file by its declared namespace no
@@ -22,7 +26,8 @@ import __builtin.std;
 //
 // Streaming is a consumer concern: this library hands you the pieces
 // (Send, FreeOutputSamples, TotalUnderruns, ClearOutputBuffer) to fill a
-// ManagedPtr<float> however you like and push it out in your own loop.
+// ManagedPtr<float> however you like and push it out in your own loop. (Chip
+// in Chip.ct is the exception: it owns its own streaming.)
 
 // Engine lifecycle, device routing, and programmatic output.
 <ShadowBinding("OwnAudio")>
@@ -45,6 +50,12 @@ Contract OwnAudio {
 
     static fn OutputDeviceCount() -> int { return host.OutputDeviceCount(); }
     static fn OutputDeviceName(index: int) -> string { return host.OutputDeviceName(index); }
+    static fn OutputDeviceId(index: int) -> string { return host.OutputDeviceId(index); }
+    static fn OutputDeviceIsDefault(index: int) -> bool { return host.OutputDeviceIsDefault(index); }
+
+    // Index of the system default output device, or -1 when none is found
+    // (pre-init, or the mock which reports none).
+    static fn DefaultOutputDeviceIndex() -> int { return host.DefaultOutputDeviceIndex(); }
 
     // Send raw interleaved floats from the native buffer at `address`
     // (a ManagedPtr<float>'s Address()) to the output, zero-copy.
@@ -57,6 +68,14 @@ Contract OwnAudio {
     // calling this. Returns false pre-init or for an unknown device.
     static fn SetOutputDeviceByName(deviceName: string) -> bool {
         return host.SetOutputDeviceByName(deviceName);
+    }
+
+    // Route output to the index-th output device (see OutputDeviceCount /
+    // OutputDeviceName / DefaultOutputDeviceIndex to discover one). Only valid
+    // while the engine is stopped; the system default is used when never
+    // called. Returns false pre-init, while running, or out of range.
+    static fn SetOutputDeviceByIndex(index: int) -> bool {
+        return host.SetOutputDeviceByIndex(index);
     }
 
     // Output ring gauges (used to pace a stream).

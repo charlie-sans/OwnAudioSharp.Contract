@@ -1,0 +1,147 @@
+namespace OwnAudioSharp;
+import __builtin.std;
+
+// OwnAudioSharp.Chip: a reusable chiptune synth engine over the OwnAudio
+// engine. All rendering/streaming is implemented in C# (the companion
+// `bridge/` project's ChipSynth, reached through this shadow); this file only
+// forwards, so Contract consumers get the same engine C# consumers call.
+//
+// Every Play* call pre-renders its sound offline into a native buffer, streams
+// it to the output ring on a background thread, and returns immediately.
+// Multiple voices overlap naturally — the output ring mixes them. The engine
+// must be initialized first (OwnAudio.Initialize).
+//
+// Waveforms: Sine, Square, Saw, Triangle, Noise, Pulse. Pulse takes a duty
+// cycle (0.05..0.95); Square is Pulse at 0.5.
+//
+// Low-level renderers (RenderVoice/RenderChord) return opaque buffer handles
+// for advanced consumers: read BufferAddress/BufferLength, stream manually via
+// SpawnStream (which frees the buffer when done), or FreeBuffer yourself.
+
+// Waveform selectors; numeric values must match the C# Wave enum (0..5).
+enum Wave {
+    /// <summary>Smooth periodic wave. Pure tone, no harmonics.</summary>
+    Sine,
+    /// <summary>Classic 50% duty cycle square wave. Hollow, retro.</summary>
+    Square,
+    /// <summary>Linear ramp from -1 to +1. Bright, buzzy harmonics.</summary>
+    Saw,
+    /// <summary>Linear triangle. Mellow, flute-like, fewer harmonics than saw.</summary>
+    Triangle,
+    /// <summary>White noise. Use for percussion, hats, snares.</summary>
+    Noise,
+    /// <summary>Variable duty cycle square wave. Duty 0.05..0.95; thin at low, fat at 0.5.</summary>
+    Pulse,
+}
+
+/// <summary>A tiny 16-bit-era chiptune synth engine over the OwnAudio engine.</summary>
+/// <example>
+///   Chip.PlayNote(72, Wave.Square, 0.3, 0.5);
+///   Chip.PlayNoteDuty(64, Wave.Pulse, 0.3, 0.5, 0.25);
+///   Chip.PlayTone(523.25, Wave.Saw, 0.4, 0.5, 0.5);
+///
+///   var chord: int[] = [60, 64, 67];
+///   Chip.PlayChord(chord, Wave.Square, 0.8, 0.4);
+///
+///   var scale: int[] = [60, 62, 64, 65, 67, 69, 71, 72];
+///   Chip.PlayMelody(scale, 0.12, Wave.Pulse, 0.5, 0.02);
+///
+///   Chip.PlaySlide(80, 40, Wave.Saw, 0.3, 0.35);
+///
+///   if (Chip.PlayMidiFile("assets/song.mid", Wave.Square, 0.4, 0.5)) {
+///       IO.Println("midi: playing assets/song.mid");
+///   }
+/// </example>
+<ShadowBinding("Chip")>
+Contract Chip {
+    // ── Pure helpers (no audio) ──────────────────────────────────────
+
+    /// <summary>Convert a MIDI note number to frequency in Hz (A4 = 440, equal temperament).</summary>
+    static fn MidiFreq(midi: int) -> float { return host.MidiFreq(midi); }
+
+    /// <summary>Return the note name for a MIDI number, e.g. 60 => "C4", 69 => "A4".</summary>
+    static fn NoteName(midi: int) -> string { return host.NoteName(midi); }
+
+    /// <summary>Return a human-readable name for a wave value ("Sine", "Square", ...).</summary>
+    static fn WaveName(wave: int) -> string { return host.WaveName(wave); }
+
+    /// <summary>Generate one sample from a waveform at a given phase (0.0..1.0). Returns -1..+1.</summary>
+    static fn Oscillate(wave: int, phase: float, duty: float) -> float { return host.Oscillate(wave, phase, duty); }
+
+    /// <summary>Quantize a float to a given number of discrete steps (0 or fewer = no quantization).</summary>
+    static fn Quantize(s: float, steps: int) -> float { return host.Quantize(s, steps); }
+
+    /// <summary>Clamp a volume value to 0.0..1.0.</summary>
+    static fn ClampVol(v: float) -> float { return host.ClampVol(v); }
+
+    // ── Low-level rendering (advanced) ───────────────────────────────
+
+    /// <summary>Render an interleaved buffer for one voice; returns an opaque buffer handle.
+    /// Fade-in/out (~5ms), volume envelope, optional frequency sweep + bit crush.</summary>
+    static fn RenderVoice(freq: float, wave: int, total: int, volume: float, duty: float, freqEnd: float, crush: float, sweep: bool) -> object {
+        return host.RenderVoice(freq, wave, total, volume, duty, freqEnd, crush, sweep);
+    }
+
+    /// <summary>Render a chord (multiple voices averaged) as one interleaved buffer handle.</summary>
+    static fn RenderChord(notes: int[], wave: int, total: int, volume: float, duty: float) -> object {
+        return host.RenderChord(notes, wave, total, volume, duty);
+    }
+
+    /// <summary>Raw address of a rendered buffer's sample data (0 when empty/freed).</summary>
+    static fn BufferAddress(buf: object) -> long { return host.BufferAddress(buf); }
+
+    /// <summary>Total float samples in a rendered buffer.</summary>
+    static fn BufferLength(buf: object) -> int { return host.BufferLength(buf); }
+
+    /// <summary>Frees a rendered buffer. Idempotent. The streamer frees buffers itself.</summary>
+    static fn FreeBuffer(buf: object) { host.FreeBuffer(buf); }
+
+    /// <summary>Stream a rendered buffer to the output ring on a background thread (frees it when done).</summary>
+    static fn SpawnStream(buf: object, totalSamples: int) { host.SpawnStream(buf, totalSamples); }
+
+    // ── High-level API (all fire-and-forget) ─────────────────────────
+
+    /// <summary>Play silence for a given duration in seconds.</summary>
+    static fn PlaySilence(seconds: float) { host.PlaySilence(seconds); }
+
+    /// <summary>Play a tone at a specific frequency (Hz).</summary>
+    static fn PlayTone(freq: float, wave: int, seconds: float, volume: float, duty: float) {
+        host.PlayTone(freq, wave, seconds, volume, duty);
+    }
+
+    /// <summary>Play a MIDI note with 50% duty cycle.</summary>
+    static fn PlayNote(midi: int, wave: int, seconds: float, volume: float) {
+        host.PlayNote(midi, wave, seconds, volume);
+    }
+
+    /// <summary>Play a MIDI note with a custom duty cycle (ideal for Pulse).</summary>
+    static fn PlayNoteDuty(midi: int, wave: int, seconds: float, volume: float, duty: float) {
+        host.PlayNoteDuty(midi, wave, seconds, volume, duty);
+    }
+
+    /// <summary>Play a MIDI note with bit-crush effect (crush = amplitude levels, 4..256).</summary>
+    static fn PlayNoteCrush(midi: int, wave: int, seconds: float, volume: float, duty: float, crush: int) {
+        host.PlayNoteCrush(midi, wave, seconds, volume, duty, crush);
+    }
+
+    /// <summary>Play a chord: multiple MIDI notes simultaneously (averaged voices).</summary>
+    static fn PlayChord(notes: int[], wave: int, seconds: float, volume: float) {
+        host.PlayChord(notes, wave, seconds, volume);
+    }
+
+    /// <summary>Play a melody: each note for noteLen seconds, then gap seconds of silence.</summary>
+    static fn PlayMelody(notes: int[], noteLen: float, wave: int, volume: float, gap: float) {
+        host.PlayMelody(notes, noteLen, wave, volume, gap);
+    }
+
+    /// <summary>Play a frequency slide between two MIDI notes (laser zaps, coins, risers).</summary>
+    static fn PlaySlide(fromMidi: int, toMidi: int, wave: int, seconds: float, volume: float) {
+        host.PlaySlide(fromMidi, toMidi, wave, seconds, volume);
+    }
+
+    /// <summary>Load and play a Standard MIDI File by path (tempo-aware sequencer).
+    /// Returns true when at least one note was scheduled.</summary>
+    static fn PlayMidiFile(path: string, wave: int, volume: float, fallback: float) -> bool {
+        return host.PlayMidiFile(path, wave, volume, fallback);
+    }
+}

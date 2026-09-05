@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <PackageReference Include="OwnAudioSharp" Version="4.0.6" />
+    <PackageReference Include="OwnAudioSharp.Midi" Version="4.0.6" />
     <!-- ObjektRT.Core provides [ClassBinding] for shadow targets. Relative
          reference so the library has no absolute paths. -->
     <ProjectReference Include="..\..\ContractIR\libs\ObjektRT.Core\ObjektRT.Core.csproj" />
@@ -24,18 +25,44 @@
     to the output by default, but the Contract CLI loads this host with
     Assembly.LoadFrom, which resolves dependencies from the SAME folder.
     Stage the Ownaudio package libs next to the bridge so the host can load.
+
+    The native ownaudio_ffi library is platform-specific (ownaudio_ffi.dll on
+    Windows, libownaudio_ffi.so on Linux, libownaudio_ffi.dylib on macOS) and
+    lives under runtimes/<rid>/native/ in the package, so the RID is detected
+    from the build host (OS + architecture) instead of being hardcoded to
+    win-x64.
 -->
+  <PropertyGroup>
+    <_NativeOs Condition="$([MSBuild]::IsOSPlatform('Windows'))">win</_NativeOs>
+    <_NativeOs Condition="$([MSBuild]::IsOSPlatform('OSX'))">osx</_NativeOs>
+    <_NativeOs Condition="$([MSBuild]::IsOSPlatform('Linux'))">linux</_NativeOs>
+    <_NativeOs Condition="'$(_NativeOs)' == ''">win</_NativeOs>
+    <_NativeArch>$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant())</_NativeArch>
+    <!-- An explicit `dotnet build -r RID` wins over host detection. -->
+    <_NativeRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</_NativeRid>
+    <_NativeRid Condition="'$(_NativeRid)' == ''">$(_NativeOs)-$(_NativeArch)</_NativeRid>
+    <_OwnAudioLibDir>$(NuGetPackageRoot)/ownaudiosharp/4.0.6/lib/net10.0</_OwnAudioLibDir>
+    <_OwnAudioNativeDir>$(NuGetPackageRoot)/ownaudiosharp/4.0.6/runtimes/$(_NativeRid)/native</_OwnAudioNativeDir>
+    <_OwnAudioMidiLibDir>$(NuGetPackageRoot)/ownaudiosharp.midi/4.0.6/lib/net10.0</_OwnAudioMidiLibDir>
+    <_OwnAudioMidiNativeDir>$(NuGetPackageRoot)/ownaudiosharp.midi/4.0.6/runtimes/$(_NativeRid)/native</_OwnAudioMidiNativeDir>
+  </PropertyGroup>
   <Target Name="StageOwnAudioLibs" AfterTargets="Build">
     <ItemGroup>
-      <_OwnAudioLib Include="$(NuGetPackageRoot)ownaudiosharp\4.0.6\lib\net10.0\*.dll" />
-      <_OwnAudioNative Include="$(NuGetPackageRoot)ownaudiosharp\4.0.6\runtimes\win-x64\native\ownaudio_ffi.dll" />
+      <_OwnAudioLib Include="$(_OwnAudioLibDir)/*.dll" />
+      <_OwnAudioNative Include="$(_OwnAudioNativeDir)/*" />
+      <_OwnAudioMidiLib Include="$(_OwnAudioMidiLibDir)/*.dll" />
+      <_OwnAudioMidiNative Include="$(_OwnAudioMidiNativeDir)/*" />
     </ItemGroup>
-    <Copy SourceFiles="@(_OwnAudioLib)"
+    <Copy SourceFiles="@(_OwnAudioLib);@(_OwnAudioMidiLib)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true" />
-    <Copy SourceFiles="@(_OwnAudioNative)"
+    <Copy SourceFiles="@(_OwnAudioNative);@(_OwnAudioMidiNative)"
           DestinationFolder="$(OutDir)"
           SkipUnchangedFiles="true" />
+    <Warning Condition="'@(_OwnAudioNative)' == ''"
+             Text="No native ownaudio_ffi library found for RID '$(_NativeRid)'; the real (non-mock) engine will not initialize. Build with a package RID (e.g. dotnet build -r win-x64 / linux-x64 / osx-arm64)." />
+    <Warning Condition="'@(_OwnAudioMidiNative)' == ''"
+             Text="No native ownaudio_midi_ffi library found for RID '$(_NativeRid)'; MidiFile reading will fail. Build with a package RID (e.g. dotnet build -r win-x64 / linux-x64 / osx-arm64)." />
   </Target>
 
 </Project>

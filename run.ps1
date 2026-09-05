@@ -15,14 +15,16 @@ Because `ccl build` does not forward --bind, we drive the CLI directly.
 #>
 param(
     [switch]$NoBuild,
+    [switch]$RealDevice,
     [string]$Cli = "ccl",
     [string]$BridgeDll = "bridge\bin\Debug\net10.0\OwnAudioSharp.Contract.dll",
     [string]$Main = "samples\main.ct"
 )
 
 $ErrorActionPreference = "Stop"
-$root = Resolve-Path "D:\git\OwnAudioSharp.Contract"
+$root = Resolve-Path ".\"
 $bridgeAbs = Join-Path $root ($BridgeDll -replace '\\','/')
+$mainAbs = Join-Path $root ($Main -replace '\\','/')
 
 if (-not $NoBuild) {
     Write-Host "== Building OwnAudioSharp.Contract bridge ==" -ForegroundColor Cyan
@@ -32,9 +34,14 @@ if (-not $NoBuild) {
 }
 
 if (-not (Test-Path $bridgeAbs)) { throw "Bridge DLL not found: $bridgeAbs (run without -NoBuild)" }
+if (-not (Test-Path $mainAbs)) { throw "Main file not found: $mainAbs" }
 
-Write-Host "`n== Running self-test: $Main ==" -ForegroundColor Cyan
+# -RealDevice: play through the system DEFAULT output device (real audio) so
+# the demo actually makes sound; otherwise the software mock engine is used.
+$env:OWNAUDIO_REAL = if ($RealDevice) { "1" } else { "0" }
+
+Write-Host "`n== Running self-test: $mainAbs ==" -ForegroundColor Cyan
 Push-Location $root
-try { & $Cli --bind $bridgeAbs $Main }
+try { & $Cli --bind $bridgeAbs $mainAbs }
 finally { Pop-Location }
 exit $LASTEXITCODE

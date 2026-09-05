@@ -44,14 +44,16 @@ public static class OwnAudioBridge
     // "ownaudio_ffi" through the managed native search path (appbase first),
     // which under Assembly.LoadFrom is the host CLI's folder, not ours. But on
     // Windows the loader returns an already-loaded module by base name, so
-    // pre-loading ownaudio_ffi.dll from OUR directory guarantees every later
+    // pre-loading the native lib from OUR directory guarantees every later
     // LoadLibrary("ownaudio_ffi") (including ownaudio's own resolver) gets the
-    // same module. Called from the module initializer and again defensively.
+    // same module. On Linux/macOS the resolver also falls back to the LoadFrom
+    // directory, so the staged file is found either way. Called from the
+    // module initializer and again defensively.
     internal static void EnsureNativeLibLoaded()
     {
         if (s_nativeLibLoaded) return;
         var dir = Path.GetDirectoryName(typeof(OwnAudioBridge).Assembly.Location);
-        var path = dir != null ? Path.Combine(dir, "ownaudio_ffi.dll") : null;
+        var path = dir != null ? Path.Combine(dir, NativeLibFileName) : null;
         if (path != null && File.Exists(path))
         {
             try { NativeLibrary.Load(path); s_nativeLibLoaded = true; }
@@ -59,6 +61,14 @@ public static class OwnAudioBridge
         }
     }
     private static bool s_nativeLibLoaded;
+
+    // The native FFI file name differs per platform and is staged into the
+    // bridge output by the csproj (runtimes/<rid>/native/ownaudio_ffi.dll,
+    // libownaudio_ffi.so, libownaudio_ffi.dylib).
+    private static string NativeLibFileName =>
+        RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ownaudio_ffi.dll" :
+        RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "libownaudio_ffi.dylib" :
+        "libownaudio_ffi.so";
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -145,8 +155,38 @@ public static class OwnAudioBridge
         => OwnaudioNet.Engine is { } e ? Safe(() =>
         {
             var devs = e.GetOutputDevices();
-            return index >= 0 && index < devs.Count ? devs[index]?.ToString() ?? "" : "";
+            return index >= 0 && index < devs.Count ? devs[index]?.Name ?? "" : "";
         }) : "";
+
+    /// <summary>Id (device GUID) of the <paramref name="index"/>-th output
+    /// device, or empty when out of range.</summary>
+    public static string OutputDeviceId(int index)
+        => OwnaudioNet.Engine is { } e ? Safe(() =>
+        {
+            var devs = e.GetOutputDevices();
+            return index >= 0 && index < devs.Count ? devs[index]?.DeviceId ?? "" : "";
+        }) : "";
+
+    /// <summary>True when the <paramref name="index"/>-th output device is the
+    /// system default (the one <c>InitializeDefault</c> uses when no explicit
+    /// device is requested).</summary>
+    public static bool OutputDeviceIsDefault(int index)
+        => OwnaudioNet.Engine is { } e ? Safe(() =>
+        {
+            var devs = e.GetOutputDevices();
+            return index >= 0 && index < devs.Count && devs[index]!.IsDefault;
+        }) : false;
+
+    /// <summary>Index of the system default output device, or -1 when the
+    /// engine cannot find one (pre-init, or the mock which reports none).</summary>
+    public static int DefaultOutputDeviceIndex()
+        => OwnaudioNet.Engine is { } e ? Safe(() =>
+        {
+            var devs = e.GetOutputDevices();
+            for (var i = 0; i < devs.Count; i++)
+                if (devs[i].IsDefault) return i;
+            return -1;
+        }) : -1;
 
     // ── Programmatic output ─────────────────────────────────────────────
 
@@ -175,6 +215,17 @@ public static class OwnAudioBridge
     public static bool SetOutputDeviceByName(string deviceName)
         => OwnaudioNet.Engine is { } e && !string.IsNullOrEmpty(deviceName)
             ? Safe(() => e.SetOutputDeviceByName(deviceName)) : false;
+
+    /// <summary>Routes output to the <paramref name="index"/>-th output device.
+    /// Returns false pre-init, while the engine is running, or for an
+    /// out-of-range index. The system default output device is used when never
+    /// called.</summary>
+    public static bool SetOutputDeviceByIndex(int index)
+    {
+        if (OwnaudioNet.Engine is not { } e || OwnaudioNet.IsRunning)
+            return false;
+        return Safe(() => e.UnderlyingEngine.SetOutputDeviceByIndex(index) == 0);
+    }
 
     /// <summary>Samples currently queued in the engine's output ring buffer
     /// (the fill level, in interleaved floats). 0 pre-init.</summary>
@@ -384,3 +435,4 @@ public static class AudioMixerHost
     private static FileSource UnwrapSource(object handle)
         => handle is FileSource fs ? fs : throw new InvalidOperationException("OwnAudio.AudioMixer: source handle is not a FileSource");
 }
+

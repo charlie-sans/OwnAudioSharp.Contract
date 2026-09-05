@@ -4,8 +4,10 @@ import OwnAudioSharp;
 
 // Self-test for the OwnAudioSharp.Contract library. It imports the library by
 // its DECLARED NAMESPACE (not by file name), proving the compiler's
-// content-based import. Runs against the software mock engine so no sound card
-// or audio file is needed.
+// content-based import. By default it runs against the software mock engine so
+// no sound card or audio file is needed. Set the environment variable
+// OWNAUDIO_REAL=1 to run the real-device demo instead, which opens the system
+// DEFAULT output device and plays through it (see Demo.RealMain).
 
 Contract Demo {
     // Send a short (real-time) 440 Hz sine in small interleaved chunks, paced
@@ -65,6 +67,15 @@ Contract Demo {
     }
 
     static fn Main() {
+        if (Environment.GetEnv("OWNAUDIO_REAL") == "1") {
+            Demo.RealMain();
+            return;
+        }
+        Demo.MockMain();
+    }
+
+    // Self-test against the software mock engine (no sound card required).
+    static fn MockMain() {
         if (!OwnAudio.Initialize(true, 48000, 2, 512)) {
             IO.Println("FAIL: Initialize(mock)");
             return;
@@ -102,6 +113,15 @@ Contract Demo {
         }
         burst.Free();
 
+        // Chip engine: fire-and-forget tones render offline in the C# bridge
+        // and stream to the output ring on a background thread. Pure helpers
+        // verify the enum/forwarding wiring without audio.
+        IO.Println("Chip.MidiFreq(69) = " + Convert.ToStringF(Chip.MidiFreq(69)));
+        IO.Println("Chip.NoteName(60) = " + Chip.NoteName(60));
+        IO.Println("Chip.WaveName(Square) = " + Chip.WaveName(Wave.Square));
+        Chip.PlayNote(64, Wave.Square, 0.2, 0.4);
+        Chip.PlayChord([60, 64, 67], Wave.Square, 0.3, 0.4);
+
         // Construction path: the library's shadow contracts allocate an object
         // and store a host handle into an instance field (`stfld`). Exercise it
         // here so a build of the object-handle layout stays honest. A path of
@@ -116,6 +136,55 @@ Contract Demo {
         OwnAudio.Shutdown();
         IO.Println("Shutdown: OK");
         IO.Println("DEMO OK");
+    }
+
+    // Real-device demo: open the system DEFAULT output device, print an
+    // index of the output devices, route to the default *by index*, then
+    // stream the tone through it. Run with OWNAUDIO_REAL=1.
+    static fn RealMain() {
+        if (!OwnAudio.InitializeDefault(48000, 2, 512)) {
+            IO.Println("FAIL: InitializeDefault (no default output device?)");
+            return;
+        }
+
+        IO.Println("OwnAudio initialized (default device):");
+        IO.Println("  SampleRate  = " + Convert.ToString(OwnAudio.SampleRate()));
+        IO.Println("  Channels    = " + Convert.ToString(OwnAudio.Channels()));
+        IO.Println("  BufferSize  = " + Convert.ToString(OwnAudio.BufferSize()));
+
+        // Index the output devices so a producer can route by index.
+        var count: int = OwnAudio.OutputDeviceCount();
+        IO.Println("  Devices     = " + Convert.ToString(count));
+        var i: int = 0;
+        while (i < count) {
+            var marker: string = "";
+            if (OwnAudio.OutputDeviceIsDefault(i)) { marker = "  (default)"; }
+            IO.Println("  [" + Convert.ToString(i) + "] "
+                + OwnAudio.OutputDeviceName(i) + marker);
+            i = i + 1;
+        }
+
+        // Route by index to the default device (engine must be stopped).
+        // Initializing the default device already opened it, so re-selecting it
+        // is optional — some hosts (e.g. a LINUX/**ALSA** card that only accepts
+        // a fixed buffer size) reject the reopen and report false. That is not
+        // fatal: continue streaming through the device we already opened.
+        var def: int = OwnAudio.DefaultOutputDeviceIndex();
+        if (def < 0) {
+            IO.Println("WARN: DefaultOutputDeviceIndex() = " + Convert.ToString(def) + " (continuing on opened device)");
+        } else if (!OwnAudio.SetOutputDeviceByIndex(def)) {
+            IO.Println("WARN: SetOutputDeviceByIndex(" + Convert.ToString(def) + ") rejected (continuing on opened device)");
+        } else {
+            IO.Println("Routed to default device index " + Convert.ToString(def) + " by index.");
+        }
+
+        OwnAudio.Start();
+
+        var underruns: long = Demo.StreamTone(256, 4 * 512);
+        IO.Println("Stream underruns = " + UnderrunsToString(underruns));
+
+        OwnAudio.Shutdown();
+        IO.Println("REAL DEVICE DEMO OK");
     }
 
     static fn UnderrunsToString(u: long) -> string {
